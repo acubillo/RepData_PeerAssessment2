@@ -1,0 +1,231 @@
+---
+title: "NOAA Storm Data Exploration For The Most Harmful Events To Population Health And The Events That Have The Greatest Economic Consequences To The US"
+author: "Adalberto Cubillo"
+date: "8/22/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+***
+
+## Synopsis
+
+This report explores the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.  
+
+The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.  
+
+This data analysis main goal is to answer the following questions:  
+
+* Across the United States, which types of events are most harmful with respect to population health? 
+
+* Across the United States, which types of events have the greatest economic consequences?
+
+To achieve this goal the first step was to process the storm data from NOAA database (which was provided as a comma separated values file). 
+
+Part of the data process was to perform a exploratory data analysis and transform some data (e.g. the economic damage information needed to be standardized). 
+
+After that, a comparison and a descriptive analysis was performed to establish which are the top 5 most harmful events in the US from people health and economic perspectives. 
+
+Finally, we concluded the most harmful events in the US are tornados and floods.  
+
+***
+
+## Data Processing
+
+First, we need to load the storm data to start the data analysis.
+
+```{r cache = TRUE}
+# Load the data into a dataframe called "storm_data".
+storm_data <- read.csv("repdata_data_StormData.csv.bz2", header = TRUE)
+```
+
+It is important to check overall information regarding the data that was just loaded. These details can provide insights on data transformations needed to be performed to data. 
+
+```{r}
+# Let's check the first 6 rows of the dataframe.
+head(storm_data)
+
+# Also, let's figure out the attributes names and types.
+names(storm_data)
+glimpse(storm_data)
+```
+
+From the types and names functions we can identify the __EVTYPE__ attribute for which the data stores the storm event types. Let´s figure out which are the top 10 storm events recorded in the dataset. 
+
+```{r}
+# How many storm levels are recorded?
+nlevels(storm_data$EVTYPE)
+
+# Is there missing data?
+sum(is.na(storm_data$EVTYPE)) > 0
+
+# Top 10 most frequent events of all time. 
+storm_data %>% 
+  group_by(EVTYPE) %>% 
+  summarise(total_amount = n()) %>% 
+  arrange(desc(total_amount)) 
+```
+
+It seems __Hail__ is the most frequent event of all time in the US (288661 records). Followed very closely by __Thunderstorm Wind__ (219940 records). Not necessarily being the most common event will tell us it causes the greatest amount of injuries or fatalities. So let´s check what events are most harmful for the US population. 
+
+Within the dataset there are the variables __FATALITIES__ and __INJURIES__ which could give us some insights regarding this question. Let´s see if the data is complete and useful. 
+
+```{r}
+# Let´s check min and max fatalities info.
+summary(storm_data$FATALITIES)
+
+# Is there missing data?
+sum(is.na(storm_data$FATALITIES)) > 0
+
+# Let´s check min and max injuries info.
+summary(storm_data$INJURIES)
+
+# Is there missing data?
+sum(is.na(storm_data$INJURIES)) > 0
+```
+
+As we can see, there are no missing data nor malformed values.  
+
+There are also variables for the events that have the greatest economic consequences. These are: __PROPDMG__, __PROPDMGEXP__, __CROPDMG__ and __CROPDMGEXP__. Let´s see if the data is complete and useful.
+
+```{r}
+# Let´s check min and max property damage info.
+summary(storm_data$PROPDMG)
+
+# Let´s check the exponents data. 
+summary(storm_data$PROPDMGEXP)
+
+# Is there missing data?
+sum(is.na(storm_data$PROPDMG)) > 0
+sum(is.na(storm_data$PROPDMGEXP)) > 0
+
+# Let´s check min and max crop damage info.
+summary(storm_data$CROPDMG)
+
+# Let´s check the exponents data. 
+summary(storm_data$CROPDMGEXP)
+
+# Is there missing data?
+sum(is.na(storm_data$CROPDMG)) > 0
+sum(is.na(storm_data$CROPDMGEXP)) > 0
+```
+
+So, the exponent variables seems to have several values that can modify the damage data accordingly. For example, a PROPDMGEXP = "M" would infer the values are in millions or "K" will be in thousands. So we require to apply some transformations to __PROPDMG__ and __CROPDMG__. 
+
+```{r cache = TRUE}
+# Get the real value applying the exponent. 
+apply_exp <- function(x, exp) {
+  exponents <- get_exp(exp)
+  result <- x * exponents
+  
+  return(result)
+}
+
+# Get the exponent value from the character format. 
+get_exp <- function(x) {
+  sapply(x, function(x) {
+    if (x == "k" | x == "K") {
+      result <- 1000
+    } else if (x == "m" | x == "M") {
+      result <- 1000000
+    } else if (x == "b" | x == "B") {
+      result <- 1000000000
+    } else if (as.integer(x)) {
+      result <- 10
+    } else {
+      result <- 0
+    }
+    
+    return(result)
+  })
+}
+
+# A new dataset is created only with the damage data stored. 
+storm_data_dmg <- storm_data %>% 
+  select(EVTYPE, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP) %>% 
+  mutate(prop_dmg_transf = apply_exp(PROPDMG, PROPDMGEXP),
+         crop_dmg_transf = apply_exp(CROPDMG, CROPDMGEXP),
+         total_dmg_transf = prop_dmg_transf + crop_dmg_transf)
+head(storm_data_dmg)
+```
+
+This will produce a new dataset called __storm_data_dmg__ which contains the property damage transformed to its full value (__prop_dmg_transf__), the crop damage transformed to its full value (__crop_dmg_transf__) and the total damage summing up both of them (__total_dmg_transf__).  
+
+***
+
+## Results
+
+Now let´s figure out which are the types of events that are most harmful with respect to population health in the US.
+
+```{r}
+# List the top 10 elements grouped by event type 
+# and based on the total population affectation (deaths + injuries). 
+storm_data_population_harm <- storm_data %>% 
+  select(EVTYPE, FATALITIES, INJURIES) %>% 
+  group_by(EVTYPE) %>% 
+  summarise(total_fatalities = sum(FATALITIES), 
+            total_injuries = sum(INJURIES), 
+            total_affected = total_fatalities + total_injuries) %>% 
+  arrange(desc(total_affected)) %>% 
+  head(10)
+storm_data_population_harm
+```
+
+So, apparently the top 5 most harmful events for population are: __tornados, excessive heat, thunderstorm winds, floods and lightnings__. 
+
+Regarding the types of events have the greatest economic consequences in the US we have the following:
+
+```{r}
+# List the top 10 elements grouped by event type 
+# and based on the total economic damage (properties + crops). 
+storm_data_economic_harm <- storm_data_dmg %>% 
+  select(EVTYPE, prop_dmg_transf, crop_dmg_transf, total_dmg_transf) %>% 
+  group_by(EVTYPE) %>% 
+  summarise(total_prop_dmg = sum(prop_dmg_transf), 
+            total_crop_dmg = sum(crop_dmg_transf), 
+            total_dmg = total_prop_dmg + total_crop_dmg) %>% 
+  arrange(desc(total_dmg)) %>% 
+  head(10)
+storm_data_economic_harm
+```
+
+So we can conclude, regarding economic consequences, the top 5 most damaging events are: __floods, hurricanes, tornados, storm surges and hails__.
+
+Here we can see the comparison between the most harmful events for population and the most damaging events with economic consequences.
+
+```{r}
+# Show top 5 most harmful events in the US with respect to population health plot.
+barplot(storm_data_population_harm$total_affected[1:5], 
+        xlab = "Events", 
+        ylab = "People affected", 
+        main = "Top 5 most harmful events in the US\n(with respect to population health)", 
+        names.arg = storm_data_population_harm$EVTYPE[1:5],
+        cex.names = 0.8)
+
+# Show top 5 most harmful events in the US with respect to economic consequences plot.
+barplot(storm_data_economic_harm$total_dmg[1:5], 
+        xlab = "Events", 
+        ylab = "Economic damage", 
+        main = "Top 5 most harmful events in the US\n(with respect to economic consequences)", 
+        names.arg = storm_data_economic_harm$EVTYPE[1:5],
+        cex.names = 0.7)
+```
+
+As we can see __floods__ and __tornados__ appear in both lists and can be considered the most harmful events in the US overall.  
+
+***
+
+## Further Work
+
+As I deepen my exploratory analysis regarding the U.S. NOAA storm database, I found the following elements for improvement in the data exploration:  
+
+* __EVTYPE__ needs to be cleaned up and some data needs to be merged. For example, there are several categories regarding wind issues: " WIND", "WND", "WINDS" and "Wind". Same goes for other categories.  
+
+* __PROPDMGEXP__ and __CROPDMGEXP__ are not standardized across the years recorded. So, the records need to be cleaned up and reformatted. This URL present a guide to follow and understand the exponent values https://github.com/flyingdisc/RepData_PeerAssessment2/blob/master/how-to-handle-PROPDMGEXP.md  
+
